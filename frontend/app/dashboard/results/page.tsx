@@ -45,12 +45,19 @@ import { getAuthenticatedUser } from "@/utils/aws-cognito";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
+type ReferenceLink = {
+  label: string;
+  url: string;
+  source: string;
+};
+
 type AbnormalValue = {
   name: string;
   value: string | number;
   unit?: string;
   status: string;
   normal_range?: string;
+  reference_link?: ReferenceLink | null;
 };
 
 type NearbyDoctor = {
@@ -805,6 +812,18 @@ export default function ResultsPage() {
                                 <p className="mt-2 text-[12.5px] text-muted">
                                   Normal range: {item.normal_range}
                                 </p>
+                              )}
+
+                              {item.reference_link && (
+                                <a
+                                  href={item.reference_link.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="mt-3 inline-flex items-center gap-1.5 text-[12.5px] font-bold text-teal-700 hover:underline"
+                                >
+                                  <ExternalLink size={13} />
+                                  Learn about {item.reference_link.label} · {item.reference_link.source}
+                                </a>
                               )}
                             </div>
                           );

@@ -846,7 +846,7 @@ async def cancel_medication(
 # REPORT ANALYSIS
 # =========================================================
 @app.post("/analyze-report")
-async def analyze_report(
+def analyze_report(
     file: UploadFile = File(...),
     email: str = Form(...),
     city: str = Form(default="Delhi"),
@@ -858,7 +858,7 @@ async def analyze_report(
     temporary_path = None
 
     try:
-        file_bytes = await file.read()
+        file_bytes = file.file.read()
 
         if not file_bytes:
             raise HTTPException(status_code=400, detail="Uploaded file is empty.")

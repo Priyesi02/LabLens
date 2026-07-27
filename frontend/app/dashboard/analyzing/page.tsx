@@ -79,7 +79,7 @@ export default function AnalyzingPage() {
   const res = await fetch(`${API_BASE_URL}/analyze-report`, {
     method: "POST",
     body: formData,
-    signal: AbortSignal.timeout(90000),
+    signal: AbortSignal.timeout(300000),
   });
 
   console.log("HTTP Status:", res.status);

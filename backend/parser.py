@@ -3,6 +3,7 @@ import json
 import re
 from config import get_llm
 from langchain_core.prompts import PromptTemplate
+from backend.reference_links import get_reference_link
 
 
 def _parse_json(text):
@@ -114,7 +115,8 @@ def normalize_tests(tests):
             "value": value,
             "unit": unit,
             "normal_range": normal_range,
-            "status": status
+            "status": status,
+            "reference_link": get_reference_link(name)
         })
 
     return cleaned_tests
