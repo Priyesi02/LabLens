@@ -10,7 +10,7 @@ import {
   FileText,
   Sparkles,
   ShieldCheck,
-  TrendingUp,
+  Bell,
   Stethoscope,
   Languages,
   CheckCircle2,
@@ -32,9 +32,9 @@ const features = [
     desc: "A clear four-tier system flags what's normal, what needs attention, and what's urgent.",
   },
   {
-    icon: TrendingUp,
-    title: "Trend tracking",
-    desc: "See how your biomarkers move over time, with context on what each shift means.",
+    icon: Bell,
+    title: "Appointment & medication reminders",
+    desc: "Save a doctor's appointment or a medicine schedule and get SMS reminders sent automatically, right on time.",
   },
   {
     icon: Stethoscope,
