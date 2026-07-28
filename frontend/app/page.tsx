@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import { Logo, PillBadge, Card, PrimaryButton, GhostButton } from "./components/ui";
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
 const features = [
   {
     icon: FileText,
@@ -125,7 +127,7 @@ export default function LandingPage() {
 
     try {
       // Ask FastAPI if this authenticated account has uploaded files before
-      const res = await fetch(`http://127.0.0.1:8000/api/patient/has-records?email=${encodeURIComponent(activeEmail)}`);
+      const res = await fetch(`${API_BASE_URL}/api/patient/has-records?email=${encodeURIComponent(activeEmail)}`);
       
       if (!res.ok) throw new Error("Backend unreachable");
       

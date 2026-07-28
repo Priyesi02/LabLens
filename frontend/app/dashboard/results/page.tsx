@@ -11,12 +11,9 @@ import {
   Cell,
   BarChart,
   Bar,
-  LineChart,
-  Line,
   XAxis,
   YAxis,
   Tooltip,
-  CartesianGrid,
 } from "recharts";
 import {
   RotateCcw,
@@ -27,7 +24,6 @@ import {
   MapPin,
   ClipboardList,
   Clock,
-  TrendingUp,
   ExternalLink,
   Phone,
   Globe,
@@ -39,6 +35,8 @@ import {
   Pill,
   Plus,
   Trash2,
+  Languages,
+  Loader2,
 } from "lucide-react";
 import { Logo, Avatar, PillBadge, Card, GhostButton } from "../../components/ui";
 import { getAuthenticatedUser } from "@/utils/aws-cognito";
@@ -172,6 +170,15 @@ export default function ResultsPage() {
   const [medicationMessage, setMedicationMessage] = useState("");
   const [medicationForm, setMedicationForm] = useState(EMPTY_MEDICATION_FORM);
 
+  const [language, setLanguage] = useState<"en" | "hi">("en");
+  const [translating, setTranslating] = useState(false);
+  const [translation, setTranslation] = useState<{
+    reportId: string;
+    summary: string;
+    specialist_reason: string;
+    questions: string[];
+  } | null>(null);
+
   useEffect(() => {
     async function loadHistory() {
       const auth = await getAuthenticatedUser();
@@ -268,6 +275,55 @@ export default function ResultsPage() {
 
     loadHistory();
   }, []);
+
+  useEffect(() => {
+    setLanguage("en");
+    setTranslation(null);
+  }, [result?.id]);
+
+  async function toggleLanguage() {
+    if (translating) return;
+
+    if (language === "hi") {
+      setLanguage("en");
+      return;
+    }
+
+    if (translation && translation.reportId === result?.id) {
+      setLanguage("hi");
+      return;
+    }
+
+    setTranslating(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/translate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          summary: result?.summary || "",
+          specialist_reason: result?.specialist?.reason || "",
+          questions: result?.questions?.questions || [],
+        }),
+      });
+
+      if (!response.ok) throw new Error(`translate failed ${response.status}`);
+
+      const data = await response.json();
+
+      setTranslation({
+        reportId: result?.id || "",
+        summary: data.summary || "",
+        specialist_reason: data.specialist_reason || "",
+        questions: Array.isArray(data.questions) ? data.questions : [],
+      });
+      setLanguage("hi");
+    } catch (err) {
+      console.error("Translation failed:", err);
+    } finally {
+      setTranslating(false);
+    }
+  }
 
   function openAppointmentForm(doctor?: NearbyDoctor) {
     setAppointmentMessage("");
@@ -546,18 +602,6 @@ export default function ResultsPage() {
       }))
       .slice(0, 5) || [];
 
-  const timelineData = [...history]
-    .map((item) => {
-      const normal = item.normal_count || 0;
-      const total = item.total_tests || 1;
-      const computedScore = item.health_score ?? Math.round((normal / total) * 100);
-      return {
-        date: item.report_date || "Unknown",
-        "Health Score": computedScore,
-      };
-    })
-    .reverse();
-
   return (
     <div className="min-h-screen bg-gradient-to-b from-canvas to-canvas-deep pb-24 selection:bg-teal-50">
       <div className="mx-auto max-w-[1280px] px-6 py-10 sm:px-10">
@@ -571,6 +615,20 @@ export default function ResultsPage() {
             <span className="text-[13.5px] font-medium font-display text-muted">
               {result.patient_name || "Guest User"} · {result.report_date || "Recent Report"}
             </span>
+            <GhostButton
+              onClick={toggleLanguage}
+              className={`border-teal-500/20 hover:border-teal-500/40 text-[13px] font-medium ${
+                translating ? "cursor-not-allowed opacity-60" : ""
+              }`}
+            >
+              {translating ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <Languages size={13} />
+              )}
+              {translating ? "Translating..." : language === "hi" ? "English" : "हिंदी में पढ़ें"}
+            </GhostButton>
+
             <GhostButton
               onClick={() => router.push("/dashboard")}
               className="group border-teal-500/20 hover:border-teal-500/40 text-[13px] font-medium"
@@ -640,9 +698,13 @@ export default function ResultsPage() {
                 </a>
               )}
 
-              {userEmail && result.id && (
+              {result.id && (
                 <div className="mt-4">
-                  <VoiceSummaryButton email={userEmail} reportId={result.id} />
+                  <VoiceSummaryButton
+                    abnormalCount={result.abnormal_count}
+                    summary={language === "hi" && translation ? translation.summary : result.summary}
+                    specialistName={result.specialist?.primary_specialist}
+                  />
                 </div>
               )}
 
@@ -734,7 +796,9 @@ export default function ResultsPage() {
                 {result.specialist.reason && (
                   <div className="mt-4 rounded-xl bg-canvas/60 p-3.5 border border-line/60 text-[13.5px] leading-relaxed text-muted">
                     <span className="font-bold text-ink block mb-0.5">Why this matches:</span>
-                    {result.specialist.reason}
+                    {language === "hi" && translation
+                      ? translation.specialist_reason
+                      : result.specialist.reason}
                   </div>
                 )}
               </Card>
@@ -745,28 +809,6 @@ export default function ResultsPage() {
             <AnimatePresence mode="wait">
               {activeTab === "analysis" && (
                 <motion.div key="analysis" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} className="space-y-6">
-                  {history.length > 1 && (
-                    <div className="p-6 rounded-2xl border border-white/70 bg-white/40 backdrop-blur-xl shadow-card">
-                      <h3 className="text-[14.5px] font-bold text-ink mb-1 flex items-center gap-2">
-                        <TrendingUp size={16} className="text-teal-500" /> Medical Trends Timeline
-                      </h3>
-                      <p className="text-[12px] text-muted mb-6">
-                        Tracking this patient’s reports only.
-                      </p>
-                      <div className="h-48 w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={timelineData} margin={{ top: 10, right: 20, left: -25, bottom: 0 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(15, 23, 42, 0.04)" vertical={false} />
-                            <XAxis dataKey="date" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
-                            <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} domain={[0, 100]} />
-                            <Tooltip />
-                            <Line type="monotone" dataKey="Health Score" stroke="#14b8a6" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      </div>
-                    </div>
-                  )}
-
                   {markerBreakdownData.length > 0 && (
                     <div className="p-6 rounded-2xl border border-white/70 bg-white/40 backdrop-blur-xl shadow-card">
                       <h3 className="text-[14.5px] font-bold text-ink mb-4 flex items-center gap-2">
@@ -850,7 +892,10 @@ export default function ResultsPage() {
 
                     {result.questions?.questions && result.questions.questions.length > 0 ? (
                       <ul className="space-y-3">
-                        {result.questions.questions.map((q, i) => (
+                        {(language === "hi" && translation
+                          ? translation.questions
+                          : result.questions.questions
+                        ).map((q, i) => (
                           <li key={i} className="flex items-start gap-3 text-[14px] bg-canvas/30 p-3.5 rounded-xl border border-line/40">
                             <span className="mt-1.5 h-2 w-2 flex-shrink-0 rounded-full bg-teal-400" />
                             <span className="leading-relaxed font-medium text-ink">{q}</span>

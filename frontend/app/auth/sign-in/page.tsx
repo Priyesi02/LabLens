@@ -4,6 +4,8 @@ import React, { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { requestLoginOTP, setStoredUserEmail } from '@/utils/aws-cognito';
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
 function SignInForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -37,7 +39,7 @@ function SignInForm() {
 
       // 2. Query your persistent backend endpoint matrix
       try {
-        const backendCheck = await fetch(`http://127.0.0.1:8000/api/patient/has-records?email=${encodeURIComponent(normalizedEmail)}`);
+        const backendCheck = await fetch(`${API_BASE_URL}/api/patient/has-records?email=${encodeURIComponent(normalizedEmail)}`);
         const data = await backendCheck.json();
 
         if (data.hasRecords === true) {
