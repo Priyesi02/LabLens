@@ -9,7 +9,7 @@ Transform complex laboratory reports into clear, personalized, and actionable he
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)
 ![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi)
 ![LangChain](https://img.shields.io/badge/LangChain-AI-green)
-![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o-412991?logo=openai)
+![OpenRouter](https://img.shields.io/badge/OpenRouter-Llama_3.1-412991)
 ![AWS Cognito](https://img.shields.io/badge/AWS-Cognito-orange?logo=amazonaws)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react)
@@ -27,7 +27,7 @@ Transform complex laboratory reports into clear, personalized, and actionable he
 
 LabLens is a full-stack AI healthcare application that converts complex laboratory reports into easy-to-understand health insights.
 
-Instead of forcing patients to interpret unfamiliar biomarkers and medical terminology, LabLens extracts report data, analyzes it using LLMs, visualizes health trends, and recommends appropriate specialists—all through a modern, interactive interface.
+Instead of forcing patients to interpret unfamiliar biomarkers and medical terminology, LabLens extracts report data, analyzes it using LLMs, and recommends appropriate specialists—all through a modern, interactive interface.
 
 ---
 
@@ -43,21 +43,22 @@ Instead of forcing patients to interpret unfamiliar biomarkers and medical termi
 
 - Plain-language explanations
 - Personalized health summaries
-- Context-aware recommendations
-- Multilingual report generation
+- Context-aware specialist recommendations
+- Doctor-prep question generation
+- Hindi translation toggle for AI-generated content
+- Text-to-speech voice summary of results
+- Verified reference links (MedlinePlus) for flagged lab values — matched via a static lookup table, never LLM-generated, so it can't hallucinate a link
 
 ### 📊 Interactive Analytics
 
 - Health score visualization
-- Biomarker trend charts
-- Risk distribution
-- Historical comparison
+- Risk distribution (normal vs. abnormal breakdown)
 
 ### 🩺 Healthcare Assistance
 
 - Nearby doctor recommendations
-- Appointment reminders
-- Medication reminders
+- Appointment reminders (SMS via Twilio)
+- Medication reminders (SMS via Twilio)
 - Personalized consultation guidance
 
 ### 🔐 Secure Authentication
@@ -82,7 +83,8 @@ Instead of forcing patients to interpret unfamiliar biomarkers and medical termi
  PDF Parsing      LangChain       AWS Cognito
 (pdfplumber)      AI Pipeline      Authentication
       │                │
-      └──────────► GPT-4o ◄─────────┘
+      └──────────► OpenRouter ◄─────────┘
+                (Llama 3.1 8B)
                        │
         ┌──────────────┴─────────────┐
         │                            │
@@ -113,7 +115,7 @@ Instead of forcing patients to interpret unfamiliar biomarkers and medical termi
 - FastAPI
 - Python
 - LangChain
-- OpenAI GPT-4o
+- OpenRouter (Llama 3.1 8B Instruct)
 - pdfplumber
 - Uvicorn
 
@@ -129,8 +131,12 @@ Instead of forcing patients to interpret unfamiliar biomarkers and medical termi
 
 ## Cloud
 
-- AWS Services
-- Amazon Cognito
+- AWS Cognito (authentication)
+- AWS S3 / Textract (configured, not currently wired into the live analysis flow)
+
+## Data Storage
+
+- No database currently — analyzed reports live in an in-memory store, appointments/medications are saved to local JSON files. Both reset on a backend restart/redeploy. See "Future Improvements."
 
 ---
 
@@ -167,15 +173,26 @@ LabLens
 │
 ├── frontend/
 │   ├── app/
-│   ├── components/
+│   │   ├── components/
+│   │   ├── dashboard/
+│   │   └── auth/
 │   ├── utils/
 │   └── public/
 │
 ├── backend/
-│   ├── auth/
-│   ├── services/
-│   ├── main.py
-│   └── doctor_search.py
+│   ├── auth/                # Cognito JWT verification
+│   ├── main.py               # FastAPI app & all API routes
+│   ├── parser.py             # PDF text -> structured lab values (LLM)
+│   ├── pipeline.py           # Abnormal values -> explanations/specialist (LLM)
+│   ├── translation.py        # Hindi translation of AI-generated content (LLM)
+│   ├── reference_links.py    # Static MedlinePlus link lookup (no LLM)
+│   ├── doctor_search.py      # Google Places nearby-doctor search
+│   ├── knowledge_base.py     # Keyword-scored medical knowledge lookup
+│   ├── database.py           # Dormant DynamoDB persistence (not wired in)
+│   └── extractor.py          # Dormant AWS Textract OCR path (not wired in)
+│
+├── knowledge_base/
+│   └── medical_data.py       # Hardcoded medical reference data
 │
 └── README.md
 ```
@@ -206,12 +223,11 @@ LabLens
 
 # 🚧 Future Improvements
 
-- OCR support with Amazon Textract
-- Patient history persistence
-- Biomarker trend engine
-- Voice assistant
+- Real database (MongoDB/Postgres) so report history, appointments, and medications survive a restart
+- Wire up the existing (currently dormant) Amazon Textract OCR path for scanned/handwritten reports
+- Biomarker trend engine — track a value across multiple visits over time, scoped correctly per patient
 - Doctor portal
-- RAG-powered medical knowledge base
+- RAG-powered medical knowledge base (current lookup is a simple keyword-scored match over a hardcoded list, not a vector DB)
 - Wearable device integrations
 
 ---
@@ -226,6 +242,6 @@ The application does **not** replace licensed healthcare professionals or clinic
 
 # 👩‍💻 Author
 
-**Amna Sehgal**
+**Amna & Priyesi**
 
-Built with ❤️ using Next.js, FastAPI, LangChain, OpenAI, and AWS.
+Built with ❤️ using Next.js, FastAPI, LangChain, OpenRouter, and AWS.
