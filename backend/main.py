@@ -469,7 +469,6 @@ app.mount(
 # APPOINTMENT MODELS
 # =========================================================
 class AppointmentCreate(BaseModel):
-    email: str
     patient_name: str
     phone_number: str
     doctor_name: str
@@ -488,7 +487,6 @@ class AppointmentCreate(BaseModel):
 # MEDICATION MODELS
 # =========================================================
 class MedicationCreate(BaseModel):
-    email: str
     patient_name: str
     phone_number: str
     medicine_name: str
@@ -520,9 +518,11 @@ def home():
 
 @app.get("/api/patient/has-records")
 async def check_patient_records(
-    email: str,
     patient_name: str = Query(default=""),
+    current_user: dict = Depends(verify_cognito_token),
 ):
+    email = current_user.get("email", "").lower().strip()
+
     if not email:
         return {"success": True, "hasRecords": False}
 
@@ -533,7 +533,7 @@ async def check_patient_records(
         history = [
             report
             for key, reports in PATIENT_HISTORY_DB.items()
-            if key.startswith(email.lower().strip() + "::")
+            if key.startswith(email + "::")
             for report in reports
         ]
 
@@ -542,9 +542,11 @@ async def check_patient_records(
 
 @app.get("/api/patient/history")
 async def get_patient_history(
-    email: str,
     patient_name: str = Query(default=""),
+    current_user: dict = Depends(verify_cognito_token),
 ):
+    email = current_user.get("email", "").lower().strip()
+
     if not email:
         return {"success": True, "history": []}
 
@@ -555,7 +557,7 @@ async def get_patient_history(
         history = [
             report
             for key, reports in PATIENT_HISTORY_DB.items()
-            if key.startswith(email.lower().strip() + "::")
+            if key.startswith(email + "::")
             for report in reports
         ]
 
@@ -566,8 +568,11 @@ async def get_patient_history(
 # APPOINTMENT ENDPOINTS
 # =========================================================
 @app.post("/api/appointments")
-async def create_appointment(payload: AppointmentCreate):
-    clean_email = payload.email.lower().strip()
+async def create_appointment(
+    payload: AppointmentCreate,
+    current_user: dict = Depends(verify_cognito_token),
+):
+    clean_email = current_user.get("email", "").lower().strip()
     patient_name = payload.patient_name.strip() or "Unknown"
     phone_number = validate_phone_number(payload.phone_number)
 
@@ -651,10 +656,10 @@ async def create_appointment(payload: AppointmentCreate):
 
 @app.get("/api/appointments")
 async def get_appointments(
-    email: str = Query(...),
     patient_name: str = Query(default=""),
+    current_user: dict = Depends(verify_cognito_token),
 ):
-    clean_email = email.lower().strip()
+    clean_email = current_user.get("email", "").lower().strip()
     normalized_patient = normalize_name(patient_name) if patient_name else None
 
     appointments = [
@@ -681,9 +686,9 @@ async def get_appointments(
 @app.patch("/api/appointments/{appointment_id}/cancel")
 async def cancel_appointment(
     appointment_id: str,
-    email: str = Query(...),
+    current_user: dict = Depends(verify_cognito_token),
 ):
-    clean_email = email.lower().strip()
+    clean_email = current_user.get("email", "").lower().strip()
 
     with appointments_lock:
         appointment = find_appointment(appointment_id)
@@ -711,8 +716,11 @@ async def cancel_appointment(
 # MEDICATION REMINDER ENDPOINTS
 # =========================================================
 @app.post("/api/medications")
-async def create_medication(payload: MedicationCreate):
-    clean_email = payload.email.lower().strip()
+async def create_medication(
+    payload: MedicationCreate,
+    current_user: dict = Depends(verify_cognito_token),
+):
+    clean_email = current_user.get("email", "").lower().strip()
     patient_name = payload.patient_name.strip() or "Unknown"
     phone_number = validate_phone_number(payload.phone_number)
     times = validate_time_slots(payload.times)
@@ -792,10 +800,10 @@ async def create_medication(payload: MedicationCreate):
 
 @app.get("/api/medications")
 async def get_medications(
-    email: str = Query(...),
     patient_name: str = Query(default=""),
+    current_user: dict = Depends(verify_cognito_token),
 ):
-    clean_email = email.lower().strip()
+    clean_email = current_user.get("email", "").lower().strip()
     normalized_patient = normalize_name(patient_name) if patient_name else None
 
     medications = [
@@ -817,9 +825,9 @@ async def get_medications(
 @app.patch("/api/medications/{medication_id}/cancel")
 async def cancel_medication(
     medication_id: str,
-    email: str = Query(...),
+    current_user: dict = Depends(verify_cognito_token),
 ):
-    clean_email = email.lower().strip()
+    clean_email = current_user.get("email", "").lower().strip()
 
     with medications_lock:
         medication = find_medication(medication_id)
@@ -849,9 +857,10 @@ async def cancel_medication(
 @app.post("/analyze-report")
 def analyze_report(
     file: UploadFile = File(...),
-    email: str = Form(...),
     city: str = Form(default="Delhi"),
+    current_user: dict = Depends(verify_cognito_token),
 ):
+    email = current_user.get("email", "")
     print("\n--- [START] Incoming Analysis Request ---")
     print(f"Target Account Email: {email}")
     print(f"File Received: {file.filename}")
@@ -985,7 +994,10 @@ class TranslateRequest(BaseModel):
 
 
 @app.post("/api/translate")
-def translate_report_text(payload: TranslateRequest):
+def translate_report_text(
+    payload: TranslateRequest,
+    current_user: dict = Depends(verify_cognito_token),
+):
     translated = translate_to_hindi(
         payload.summary, payload.specialist_reason, payload.questions
     )
@@ -1008,11 +1020,11 @@ def get_patient_dashboard(
 
 @app.get("/api/patient/report/text-summary")
 async def get_text_summary(
-    email: str = Query(...),
     report_id: str = Query(...),
     patient_name: str = Query(default=""),
+    current_user: dict = Depends(verify_cognito_token),
 ):
-    clean_email = email.lower().strip()
+    clean_email = current_user.get("email", "").lower().strip()
 
     if patient_name:
         key = make_patient_key(clean_email, patient_name)

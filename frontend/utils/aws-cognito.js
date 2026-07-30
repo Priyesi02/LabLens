@@ -57,19 +57,44 @@ export function clearStoredUserEmail() {
 
 export async function getAuthenticatedUser() {
   try {
+    const session = await fetchAuthSession({ forceRefresh: false });
+    const idToken = session.tokens?.idToken;
+
+    if (!idToken) {
+      clearAuthenticatedUserEmail();
+      return { success: false, error: 'No active session. Please log in again.' };
+    }
+
     const user = await getCurrentUser({ bypassCache: true });
-    const email = user?.attributes?.email || user?.username || getStoredAuthenticatedUserEmail();
+    const email = idToken.payload?.email || user?.attributes?.email || user?.username;
+
     if (!email) {
+      clearAuthenticatedUserEmail();
       return { success: false, error: 'Authenticated user missing email attribute' };
     }
+
     persistAuthenticatedUserEmail(email);
     return { success: true, user, email };
   } catch (error) {
-    const storedEmail = getStoredAuthenticatedUserEmail();
-    if (storedEmail) {
-      return { success: true, user: null, email: storedEmail, fallback: true };
-    }
+    // A real session check failed (expired, signed out, or never logged in) —
+    // this must NOT silently fall back to a remembered email. Force re-login.
+    clearAuthenticatedUserEmail();
     return { success: false, error: error?.message || String(error) };
+  }
+}
+
+/**
+ * Returns the current Cognito ID token (JWT string) to attach as
+ * `Authorization: Bearer <token>` on API calls, or null if there is no
+ * valid session. This never falls back to a locally remembered email —
+ * the backend verifies this token cryptographically on every request.
+ */
+export async function getIdToken() {
+  try {
+    const session = await fetchAuthSession({ forceRefresh: false });
+    return session.tokens?.idToken?.toString() || null;
+  } catch {
+    return null;
   }
 }
 

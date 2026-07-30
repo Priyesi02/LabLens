@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { requestLoginOTP, setStoredUserEmail } from '@/utils/aws-cognito';
+import { requestLoginOTP, verifyLoginOTP, setStoredUserEmail, getIdToken } from '@/utils/aws-cognito';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -10,7 +10,9 @@ function SignInForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const [step, setStep] = useState<'email' | 'otp'>('email');
   const [email, setEmail] = useState('');
+  const [otpCode, setOtpCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [infoMessage, setInfoMessage] = useState('');
@@ -25,36 +27,54 @@ function SignInForm() {
     }
   }, [searchParams]);
 
-  const handleSimpleSignIn = async (e: React.FormEvent) => {
+  const handleRequestOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
 
     const normalizedEmail = email.trim().toLowerCase();
-    setStoredUserEmail(normalizedEmail);
 
     try {
-      // 1. Trigger the existing Cognito validation sequence and keep the account session sticky in the browser.
-      await requestLoginOTP(normalizedEmail);
+      const result = await requestLoginOTP(normalizedEmail);
+      if (!result.success) {
+        throw new Error(result.error || 'Could not send login code.');
+      }
+      setStep('otp');
+      setInfoMessage(`Enter the code sent to ${normalizedEmail}.`);
+    } catch (err: any) {
+      setError(err.message || 'Could not send login code.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-      // 2. Query your persistent backend endpoint matrix
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      const result = await verifyLoginOTP(otpCode.trim());
+      if (!result.success) {
+        throw new Error(result.error || 'Invalid or expired code.');
+      }
+
+      const normalizedEmail = email.trim().toLowerCase();
+      setStoredUserEmail(normalizedEmail);
+
       try {
-        const backendCheck = await fetch(`${API_BASE_URL}/api/patient/has-records?email=${encodeURIComponent(normalizedEmail)}`);
+        const idToken = await getIdToken();
+        const backendCheck = await fetch(`${API_BASE_URL}/api/patient/has-records`, {
+          headers: idToken ? { Authorization: `Bearer ${idToken}` } : {},
+        });
         const data = await backendCheck.json();
 
-        if (data.hasRecords === true) {
-          // Returning user with a complete historical report stack
-          router.push('/dashboard/results');
-        } else {
-          // First-time user with zero parsed documents
-          router.push('/dashboard');
-        }
+        router.push(data.hasRecords === true ? '/dashboard/results' : '/dashboard');
       } catch {
-        // Offline fallback safeguard
         router.push('/dashboard');
       }
     } catch (err: any) {
-      setError(err.message || 'Authentication sequence failed.');
+      setError(err.message || 'Could not verify code.');
     } finally {
       setLoading(false);
     }
@@ -72,7 +92,9 @@ function SignInForm() {
           Clinical Gateway
         </h1>
         <p className="text-muted text-sm mt-1 font-light">
-          Enter your registered email to access your workspace
+          {step === 'email'
+            ? 'Enter your registered email to access your workspace'
+            : 'Enter the verification code sent to your email'}
         </p>
       </div>
 
@@ -88,34 +110,66 @@ function SignInForm() {
         </div>
       )}
 
-      <form onSubmit={handleSimpleSignIn} className="space-y-5">
-        <div>
-          <label className="block text-xs font-medium text-ink-soft tracking-wideish uppercase mb-1.5">
-            Registered Email Address
-          </label>
-          <input
-            type="email" required placeholder="john@example.com"
-            value={email} onChange={e => setEmail(e.target.value)}
-            className="w-full px-4 py-3 bg-canvas border border-line rounded-md text-ink text-sm placeholder-faint focus:outline-none focus:border-teal-400 transition-all font-light"
-          />
-        </div>
+      {step === 'email' ? (
+        <form onSubmit={handleRequestOtp} className="space-y-5">
+          <div>
+            <label className="block text-xs font-medium text-ink-soft tracking-wideish uppercase mb-1.5">
+              Registered Email Address
+            </label>
+            <input
+              type="email" required placeholder="john@example.com"
+              value={email} onChange={e => setEmail(e.target.value)}
+              className="w-full px-4 py-3 bg-canvas border border-line rounded-md text-ink text-sm placeholder-faint focus:outline-none focus:border-teal-400 transition-all font-light"
+            />
+          </div>
 
-        <button
-          type="submit" disabled={loading}
-          className="w-full py-3 px-4 bg-teal-500 hover:bg-teal-600 text-white font-medium rounded-xl shadow-glow hover:shadow-glow-hover transition-all text-sm cursor-pointer"
-        >
-          {loading ? 'Verifying Account...' : 'Sign In'}
-        </button>
+          <button
+            type="submit" disabled={loading}
+            className="w-full py-3 px-4 bg-teal-500 hover:bg-teal-600 text-white font-medium rounded-xl shadow-glow hover:shadow-glow-hover transition-all text-sm cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {loading ? 'Sending Code...' : 'Send Login Code'}
+          </button>
 
-        <div className="text-center mt-6">
-          <p className="text-xs text-muted font-light">
-            First profile setup?{' '}
-            <button type="button" onClick={() => router.push('/auth/sign-up')} className="text-teal-600 hover:text-teal-500 font-medium transition-colors">
-              Create patient record
+          <div className="text-center mt-6">
+            <p className="text-xs text-muted font-light">
+              First profile setup?{' '}
+              <button type="button" onClick={() => router.push('/auth/sign-up')} className="text-teal-600 hover:text-teal-500 font-medium transition-colors">
+                Create patient record
+              </button>
+            </p>
+          </div>
+        </form>
+      ) : (
+        <form onSubmit={handleVerifyOtp} className="space-y-5">
+          <div>
+            <label className="block text-xs font-medium text-ink-soft tracking-wideish uppercase mb-1.5">
+              Verification Code
+            </label>
+            <input
+              type="text" inputMode="numeric" required placeholder="123456" autoFocus
+              value={otpCode} onChange={e => setOtpCode(e.target.value)}
+              className="w-full px-4 py-3 bg-canvas border border-line rounded-md text-ink text-sm placeholder-faint focus:outline-none focus:border-teal-400 transition-all font-light tracking-widest text-center"
+            />
+          </div>
+
+          <button
+            type="submit" disabled={loading}
+            className="w-full py-3 px-4 bg-teal-500 hover:bg-teal-600 text-white font-medium rounded-xl shadow-glow hover:shadow-glow-hover transition-all text-sm cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {loading ? 'Verifying...' : 'Verify & Sign In'}
+          </button>
+
+          <div className="text-center mt-6">
+            <button
+              type="button"
+              onClick={() => { setStep('email'); setOtpCode(''); setError(''); setInfoMessage(''); }}
+              className="text-xs text-teal-600 hover:text-teal-500 font-medium transition-colors"
+            >
+              Use a different email
             </button>
-          </p>
-        </div>
-      </form>
+          </div>
+        </form>
+      )}
     </div>
   );
 }

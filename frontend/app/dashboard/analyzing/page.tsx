@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { FileSearch, Microscope, Brain, Sparkles, Check } from "lucide-react";
 import { Logo } from "../../components/ui";
-import { getAuthenticatedUser } from "@/utils/aws-cognito";
+import { getAuthenticatedUser, getIdToken } from "@/utils/aws-cognito";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -58,7 +58,11 @@ export default function AnalyzingPage() {
         return;
       }
 
-      const userEmail = auth.email;
+      const idToken = await getIdToken();
+      if (!idToken) {
+        router.replace("/auth/sign-in");
+        return;
+      }
 
       let currentStep = 0;
       stepTimer = setInterval(() => {
@@ -71,13 +75,13 @@ export default function AnalyzingPage() {
 
   const formData = new FormData();
   formData.append("file", file);
-  formData.append("email", userEmail);
 
   const city = localStorage.getItem("lablens_city") || "Delhi";
   formData.append("city", city);
 
   const res = await fetch(`${API_BASE_URL}/analyze-report`, {
     method: "POST",
+    headers: { Authorization: `Bearer ${idToken}` },
     body: formData,
     signal: AbortSignal.timeout(300000),
   });

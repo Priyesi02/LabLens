@@ -39,9 +39,24 @@ import {
   Loader2,
 } from "lucide-react";
 import { Logo, Avatar, PillBadge, Card, GhostButton } from "../../components/ui";
-import { getAuthenticatedUser } from "@/utils/aws-cognito";
+import { getAuthenticatedUser, getIdToken } from "@/utils/aws-cognito";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
+async function authFetch(path: string, options: RequestInit = {}) {
+  const idToken = await getIdToken();
+  if (!idToken) {
+    throw new Error("No active session. Please log in again.");
+  }
+
+  return fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      Authorization: `Bearer ${idToken}`,
+    },
+  });
+}
 
 type ReferenceLink = {
   label: string;
@@ -197,8 +212,8 @@ export default function ResultsPage() {
         const patientName = sessionStorage.getItem("lablens_active_patient_name") || "";
 
         try {
-          const appointmentResponse = await fetch(
-            `${API_BASE_URL}/api/appointments?email=${encodeURIComponent(auth.email)}&patient_name=${encodeURIComponent(patientName)}`
+          const appointmentResponse = await authFetch(
+            `/api/appointments?patient_name=${encodeURIComponent(patientName)}`
           );
 
           if (appointmentResponse.ok) {
@@ -214,8 +229,8 @@ export default function ResultsPage() {
         }
 
         try {
-          const medicationResponse = await fetch(
-            `${API_BASE_URL}/api/medications?email=${encodeURIComponent(auth.email)}&patient_name=${encodeURIComponent(patientName)}`
+          const medicationResponse = await authFetch(
+            `/api/medications?patient_name=${encodeURIComponent(patientName)}`
           );
 
           if (medicationResponse.ok) {
@@ -230,8 +245,8 @@ export default function ResultsPage() {
           console.error("Unable to load medications:", medicationError);
         }
 
-        const res = await fetch(
-          `${API_BASE_URL}/api/patient/history?email=${encodeURIComponent(auth.email)}&patient_name=${encodeURIComponent(patientName)}`
+        const res = await authFetch(
+          `/api/patient/history?patient_name=${encodeURIComponent(patientName)}`
         );
 
         if (!res.ok) throw new Error(`history fetch failed ${res.status}`);
@@ -299,7 +314,7 @@ export default function ResultsPage() {
     setTranslateError(null);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/translate`, {
+      const response = await authFetch(`/api/translate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -358,13 +373,12 @@ export default function ResultsPage() {
     setAppointmentMessage("");
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/appointments`, {
+      const response = await authFetch(`/api/appointments`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          email: userEmail,
           patient_name: result.patient_name,
           phone_number: appointmentForm.phone_number,
           doctor_name: appointmentForm.doctor_name,
@@ -415,10 +429,8 @@ export default function ResultsPage() {
   }
 
   async function cancelAppointment(appointmentId: string) {
-    if (!userEmail) return;
-
-    const response = await fetch(
-      `${API_BASE_URL}/api/appointments/${encodeURIComponent(appointmentId)}/cancel?email=${encodeURIComponent(userEmail)}`,
+    const response = await authFetch(
+      `/api/appointments/${encodeURIComponent(appointmentId)}/cancel`,
       { method: "PATCH" }
     );
 
@@ -485,13 +497,12 @@ export default function ResultsPage() {
     setMedicationMessage("");
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/medications`, {
+      const response = await authFetch(`/api/medications`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          email: userEmail,
           patient_name: result.patient_name,
           phone_number: medicationForm.phone_number,
           medicine_name: medicationForm.medicine_name,
@@ -538,10 +549,8 @@ export default function ResultsPage() {
   }
 
   async function cancelMedication(medicationId: string) {
-    if (!userEmail) return;
-
-    const response = await fetch(
-      `${API_BASE_URL}/api/medications/${encodeURIComponent(medicationId)}/cancel?email=${encodeURIComponent(userEmail)}`,
+    const response = await authFetch(
+      `/api/medications/${encodeURIComponent(medicationId)}/cancel`,
       { method: "PATCH" }
     );
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getAuthenticatedUser, getStoredUserEmail } from '@/utils/aws-cognito';
+import { getAuthenticatedUser, getIdToken } from '@/utils/aws-cognito';
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion, Variants } from "framer-motion";
@@ -88,20 +88,13 @@ export default function LandingPage() {
   const router = useRouter();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   // Check client-side authentication status on mount using AWS Amplify
-// Check client-side authentication status on mount using AWS Amplify Core
   useEffect(() => {
     async function checkUserSession() {
       try {
         const auth = await getAuthenticatedUser();
-        if (auth.success && auth.email) {
-          setIsAuthenticated(true);
-          setUserEmail(auth.email);
-        } else {
-          setIsAuthenticated(false);
-        }
+        setIsAuthenticated(auth.success && !!auth.email);
       } catch (err) {
         setIsAuthenticated(false);
       } finally {
@@ -117,18 +110,23 @@ export default function LandingPage() {
 
     if (checkingAuth) return;
 
-    const storedEmail = getStoredUserEmail();
-    const activeEmail = (userEmail || storedEmail || "").trim();
-
-    if (!isAuthenticated && !activeEmail) {
+    if (!isAuthenticated) {
       router.push("/auth/sign-in");
       return;
     }
 
     try {
+      const idToken = await getIdToken();
+      if (!idToken) {
+        router.push("/auth/sign-in");
+        return;
+      }
+
       // Ask FastAPI if this authenticated account has uploaded files before
-      const res = await fetch(`${API_BASE_URL}/api/patient/has-records?email=${encodeURIComponent(activeEmail)}`);
-      
+      const res = await fetch(`${API_BASE_URL}/api/patient/has-records`, {
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+
       if (!res.ok) throw new Error("Backend unreachable");
       
       const data = await res.json();
@@ -221,7 +219,7 @@ export default function LandingPage() {
             {/* We use a div container to catch the click without nesting buttons */}
             <div onClick={handleNavigationFlow} className="cursor-pointer w-full">
               <PrimaryButton className="group px-8 py-4 text-[15px] pointer-events-none">
-                {checkingAuth ? "Checking System..." : (isAuthenticated || getStoredUserEmail()) ? "View Workspace" : "Analyze your report"}
+                {checkingAuth ? "Checking System..." : isAuthenticated ? "View Workspace" : "Analyze your report"}
                 <ArrowRight size={16} className="transition-transform duration-300 group-hover:translate-x-1" />
               </PrimaryButton>
             </div>
