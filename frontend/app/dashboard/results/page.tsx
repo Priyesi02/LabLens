@@ -172,6 +172,7 @@ export default function ResultsPage() {
 
   const [language, setLanguage] = useState<"en" | "hi">("en");
   const [translating, setTranslating] = useState(false);
+  const [translateError, setTranslateError] = useState<string | null>(null);
   const [translation, setTranslation] = useState<{
     reportId: string;
     summary: string;
@@ -295,6 +296,7 @@ export default function ResultsPage() {
     }
 
     setTranslating(true);
+    setTranslateError(null);
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/translate`, {
@@ -307,7 +309,10 @@ export default function ResultsPage() {
         }),
       });
 
-      if (!response.ok) throw new Error(`translate failed ${response.status}`);
+      if (!response.ok) {
+        const errorBody = await response.text().catch(() => "");
+        throw new Error(`Translate request failed (${response.status}): ${errorBody}`);
+      }
 
       const data = await response.json();
 
@@ -320,6 +325,9 @@ export default function ResultsPage() {
       setLanguage("hi");
     } catch (err) {
       console.error("Translation failed:", err);
+      setTranslateError(
+        err instanceof Error ? err.message : "Could not translate this report."
+      );
     } finally {
       setTranslating(false);
     }
@@ -637,6 +645,13 @@ export default function ResultsPage() {
             </GhostButton>
           </div>
         </motion.div>
+
+        {translateError && (
+          <div className="mb-6 flex items-center gap-2 rounded-xl border border-status-danger/20 bg-status-danger-bg/40 px-4 py-3 text-[13px] font-medium text-status-danger">
+            <AlertCircle size={15} />
+            {translateError}
+          </div>
+        )}
 
         <div className="flex items-center gap-8 mb-10 border-b border-line/60 overflow-x-auto scrollbar-none w-full">
           {[
