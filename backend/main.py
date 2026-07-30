@@ -4,9 +4,11 @@ from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
 import asyncio
+import json
 import os
 import re
 import tempfile
+import threading
 import uuid
 
 import pdfplumber
@@ -17,7 +19,6 @@ from pydantic import BaseModel, Field
 from twilio.rest import Client
 
 from backend.auth.cognito_verifier import verify_cognito_token
-from backend.db import appointments_collection, medications_collection, reports_collection
 from backend.doctor_search import search_nearby_doctors
 from backend.parser import parse_lab_values
 from backend.pipeline import run_analysis_pipeline
@@ -29,14 +30,70 @@ from backend.translation import translate_to_hindi
 # =========================================================
 BASE_DIR = Path(__file__).resolve().parent.parent
 UPLOAD_DIR = BASE_DIR / "uploaded_reports"
+DATA_DIR = BASE_DIR / "backend" / "data"
+APPOINTMENTS_FILE = DATA_DIR / "appointments.json"
+MEDICATIONS_FILE = DATA_DIR / "medications.json"
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Kolkata")
 DAY_REMINDER_HOUR = int(os.getenv("DAY_REMINDER_HOUR", "9"))
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
+
+appointments_lock = threading.Lock()
+medications_lock = threading.Lock()
+PATIENT_HISTORY_DB = {}
+
+
+def _load_appointments():
+    if not APPOINTMENTS_FILE.exists():
+        return []
+
+    try:
+        data = json.loads(APPOINTMENTS_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception as exc:
+        print(f"[Appointments] Could not read appointment file: {exc}")
+        return []
+
+
+def _save_appointments():
+    with appointments_lock:
+        temporary_file = APPOINTMENTS_FILE.with_suffix(".tmp")
+        temporary_file.write_text(
+            json.dumps(APPOINTMENTS_DB, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        temporary_file.replace(APPOINTMENTS_FILE)
+
+
+def _load_medications():
+    if not MEDICATIONS_FILE.exists():
+        return []
+
+    try:
+        data = json.loads(MEDICATIONS_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception as exc:
+        print(f"[Medications] Could not read medication file: {exc}")
+        return []
+
+
+def _save_medications():
+    with medications_lock:
+        temporary_file = MEDICATIONS_FILE.with_suffix(".tmp")
+        temporary_file.write_text(
+            json.dumps(MEDICATIONS_DB, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        temporary_file.replace(MEDICATIONS_FILE)
+
+
+APPOINTMENTS_DB = _load_appointments()
+MEDICATIONS_DB = _load_medications()
 
 if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN or not TWILIO_PHONE_NUMBER:
     print(
@@ -122,11 +179,25 @@ def get_appointment_datetime(appointment: dict):
 
 
 def find_appointment(appointment_id: str):
-    return appointments_collection.find_one({"id": appointment_id}, {"_id": 0})
+    return next(
+        (
+            appointment
+            for appointment in APPOINTMENTS_DB
+            if appointment.get("id") == appointment_id
+        ),
+        None,
+    )
 
 
 def find_medication(medication_id: str):
-    return medications_collection.find_one({"id": medication_id}, {"_id": 0})
+    return next(
+        (
+            medication
+            for medication in MEDICATIONS_DB
+            if medication.get("id") == medication_id
+        ),
+        None,
+    )
 
 
 def get_medication_date_range(medication: dict):
@@ -165,11 +236,15 @@ async def check_appointment_reminders():
 
     Reminder flags are persisted so the same SMS is not sent twice.
     """
-    appointments_snapshot = list(
-        appointments_collection.find({"status": "scheduled"}, {"_id": 0})
-    )
+    changed = False
+
+    with appointments_lock:
+        appointments_snapshot = [dict(item) for item in APPOINTMENTS_DB]
 
     for appointment in appointments_snapshot:
+        if appointment.get("status") != "scheduled":
+            continue
+
         try:
             appointment_datetime = get_appointment_datetime(appointment)
             now = datetime.now(appointment_datetime.tzinfo)
@@ -206,13 +281,12 @@ async def check_appointment_reminders():
 
                 await asyncio.to_thread(send_sms, phone_number, day_message)
 
-                appointments_collection.update_one(
-                    {"id": appointment["id"]},
-                    {"$set": {
-                        "day_reminder_sent": True,
-                        "day_reminder_sent_at": now.isoformat(),
-                    }},
-                )
+                with appointments_lock:
+                    live_appointment = find_appointment(appointment["id"])
+                    if live_appointment:
+                        live_appointment["day_reminder_sent"] = True
+                        live_appointment["day_reminder_sent_at"] = now.isoformat()
+                        changed = True
 
             if one_hour_reminder_due:
                 hour_message = (
@@ -225,19 +299,21 @@ async def check_appointment_reminders():
 
                 await asyncio.to_thread(send_sms, phone_number, hour_message)
 
-                appointments_collection.update_one(
-                    {"id": appointment["id"]},
-                    {"$set": {
-                        "one_hour_reminder_sent": True,
-                        "one_hour_reminder_sent_at": now.isoformat(),
-                    }},
-                )
+                with appointments_lock:
+                    live_appointment = find_appointment(appointment["id"])
+                    if live_appointment:
+                        live_appointment["one_hour_reminder_sent"] = True
+                        live_appointment["one_hour_reminder_sent_at"] = now.isoformat()
+                        changed = True
 
         except Exception as exc:
             print(
                 "[Appointments] Reminder check failed for "
                 f"{appointment.get('id')}: {exc}"
             )
+
+    if changed:
+        _save_appointments()
 
 
 async def appointment_reminder_loop():
@@ -257,11 +333,15 @@ async def check_medication_reminders():
     nothing is sent twice even if the loop restarts.
     Medications past their duration are auto-marked 'completed'.
     """
-    medications_snapshot = list(
-        medications_collection.find({"status": "active"}, {"_id": 0})
-    )
+    changed = False
+
+    with medications_lock:
+        medications_snapshot = [dict(item) for item in MEDICATIONS_DB]
 
     for medication in medications_snapshot:
+        if medication.get("status") != "active":
+            continue
+
         try:
             timezone_name = medication.get("timezone") or DEFAULT_TIMEZONE
             try:
@@ -273,17 +353,17 @@ async def check_medication_reminders():
             start_date, end_date = get_medication_date_range(medication)
 
             if now.date() > end_date:
-                medications_collection.update_one(
-                    {"id": medication["id"], "status": "active"},
-                    {"$set": {"status": "completed"}},
-                )
+                with medications_lock:
+                    live_medication = find_medication(medication["id"])
+                    if live_medication and live_medication.get("status") == "active":
+                        live_medication["status"] = "completed"
+                        changed = True
                 continue
 
             if now.date() < start_date:
                 continue
 
             sent_reminders = set(medication.get("sent_reminders", []))
-            reminders_changed = False
             phone_number = medication["phone_number"]
             medicine_name = medication.get("medicine_name", "your medicine")
             dosage = medication.get("dosage", "")
@@ -305,7 +385,6 @@ async def check_medication_reminders():
                 if (now - slot_datetime).total_seconds() > 3600:
                     # Too late to be a useful reminder, mark sent and skip.
                     sent_reminders.add(slot_key)
-                    reminders_changed = True
                     continue
 
                 message = (
@@ -319,19 +398,21 @@ async def check_medication_reminders():
 
                 await asyncio.to_thread(send_sms, phone_number, message)
                 sent_reminders.add(slot_key)
-                reminders_changed = True
 
-            if reminders_changed:
-                medications_collection.update_one(
-                    {"id": medication["id"]},
-                    {"$set": {"sent_reminders": sorted(sent_reminders)}},
-                )
+                with medications_lock:
+                    live_medication = find_medication(medication["id"])
+                    if live_medication:
+                        live_medication["sent_reminders"] = sorted(sent_reminders)
+                        changed = True
 
         except Exception as exc:
             print(
                 "[Medications] Reminder check failed for "
                 f"{medication.get('id')}: {exc}"
             )
+
+    if changed:
+        _save_medications()
 
 
 async def medication_reminder_loop():
@@ -432,8 +513,8 @@ def home():
         "status": "API running smoothly",
         "appointment_scheduler": "running",
         "medication_scheduler": "running",
-        "saved_appointments": appointments_collection.count_documents({}),
-        "saved_medications": medications_collection.count_documents({}),
+        "saved_appointments": len(APPOINTMENTS_DB),
+        "saved_medications": len(MEDICATIONS_DB),
     }
 
 
@@ -446,13 +527,17 @@ async def check_patient_records(
         return {"success": True, "hasRecords": False}
 
     if patient_name:
-        query = {"patient_key": make_patient_key(email, patient_name)}
+        key = make_patient_key(email, patient_name)
+        history = PATIENT_HISTORY_DB.get(key, [])
     else:
-        query = {"email": email.lower().strip()}
+        history = [
+            report
+            for key, reports in PATIENT_HISTORY_DB.items()
+            if key.startswith(email.lower().strip() + "::")
+            for report in reports
+        ]
 
-    has_records = reports_collection.count_documents(query) > 0
-
-    return {"success": True, "hasRecords": has_records}
+    return {"success": True, "hasRecords": len(history) > 0}
 
 
 @app.get("/api/patient/history")
@@ -464,13 +549,15 @@ async def get_patient_history(
         return {"success": True, "history": []}
 
     if patient_name:
-        query = {"patient_key": make_patient_key(email, patient_name)}
+        key = make_patient_key(email, patient_name)
+        history = PATIENT_HISTORY_DB.get(key, [])
     else:
-        query = {"email": email.lower().strip()}
-
-    history = list(
-        reports_collection.find(query, {"_id": 0}).sort("analyzed_at", -1)
-    )
+        history = [
+            report
+            for key, reports in PATIENT_HISTORY_DB.items()
+            if key.startswith(email.lower().strip() + "::")
+            for report in reports
+        ]
 
     return {"success": True, "history": history}
 
@@ -526,7 +613,10 @@ async def create_appointment(payload: AppointmentCreate):
         "created_at": datetime.now(timezone).isoformat(),
     }
 
-    appointments_collection.insert_one({**appointment})
+    with appointments_lock:
+        APPOINTMENTS_DB.append(appointment)
+
+    _save_appointments()
 
     confirmation_message = (
         "LabLens Appointment Saved\n"
@@ -569,11 +659,13 @@ async def get_appointments(
 
     appointments = [
         appointment
-        for appointment in appointments_collection.find(
-            {"email": clean_email}, {"_id": 0}
+        for appointment in APPOINTMENTS_DB
+        if appointment.get("email") == clean_email
+        and (
+            normalized_patient is None
+            or normalize_name(appointment.get("patient_name", ""))
+            == normalized_patient
         )
-        if normalized_patient is None
-        or normalize_name(appointment.get("patient_name", "")) == normalized_patient
     ]
 
     appointments.sort(
@@ -593,26 +685,21 @@ async def cancel_appointment(
 ):
     clean_email = email.lower().strip()
 
-    appointment = find_appointment(appointment_id)
+    with appointments_lock:
+        appointment = find_appointment(appointment_id)
 
-    if not appointment or appointment.get("email") != clean_email:
-        raise HTTPException(
-            status_code=404,
-            detail="Appointment not found.",
-        )
+        if not appointment or appointment.get("email") != clean_email:
+            raise HTTPException(
+                status_code=404,
+                detail="Appointment not found.",
+            )
 
-    appointment["status"] = "cancelled"
-    appointment["cancelled_at"] = datetime.now(
-        ZoneInfo(appointment.get("timezone", DEFAULT_TIMEZONE))
-    ).isoformat()
+        appointment["status"] = "cancelled"
+        appointment["cancelled_at"] = datetime.now(
+            ZoneInfo(appointment.get("timezone", DEFAULT_TIMEZONE))
+        ).isoformat()
 
-    appointments_collection.update_one(
-        {"id": appointment_id},
-        {"$set": {
-            "status": "cancelled",
-            "cancelled_at": appointment["cancelled_at"],
-        }},
-    )
+    _save_appointments()
 
     return {
         "success": True,
@@ -666,7 +753,10 @@ async def create_medication(payload: MedicationCreate):
         "created_at": datetime.now(timezone).isoformat(),
     }
 
-    medications_collection.insert_one({**medication})
+    with medications_lock:
+        MEDICATIONS_DB.append(medication)
+
+    _save_medications()
 
     confirmation_message = (
         "LabLens Medication Reminder Set\n"
@@ -710,11 +800,13 @@ async def get_medications(
 
     medications = [
         medication
-        for medication in medications_collection.find(
-            {"email": clean_email}, {"_id": 0}
+        for medication in MEDICATIONS_DB
+        if medication.get("email") == clean_email
+        and (
+            normalized_patient is None
+            or normalize_name(medication.get("patient_name", ""))
+            == normalized_patient
         )
-        if normalized_patient is None
-        or normalize_name(medication.get("patient_name", "")) == normalized_patient
     ]
 
     medications.sort(key=lambda item: item.get("start_date", ""))
@@ -729,26 +821,21 @@ async def cancel_medication(
 ):
     clean_email = email.lower().strip()
 
-    medication = find_medication(medication_id)
+    with medications_lock:
+        medication = find_medication(medication_id)
 
-    if not medication or medication.get("email") != clean_email:
-        raise HTTPException(
-            status_code=404,
-            detail="Medication reminder not found.",
-        )
+        if not medication or medication.get("email") != clean_email:
+            raise HTTPException(
+                status_code=404,
+                detail="Medication reminder not found.",
+            )
 
-    medication["status"] = "cancelled"
-    medication["cancelled_at"] = datetime.now(
-        ZoneInfo(medication.get("timezone", DEFAULT_TIMEZONE))
-    ).isoformat()
+        medication["status"] = "cancelled"
+        medication["cancelled_at"] = datetime.now(
+            ZoneInfo(medication.get("timezone", DEFAULT_TIMEZONE))
+        ).isoformat()
 
-    medications_collection.update_one(
-        {"id": medication_id},
-        {"$set": {
-            "status": "cancelled",
-            "cancelled_at": medication["cancelled_at"],
-        }},
-    )
+    _save_medications()
 
     return {
         "success": True,
@@ -874,11 +961,7 @@ def analyze_report(
 
         clean_email = email.lower().strip()
         patient_key = make_patient_key(clean_email, patient_name)
-        reports_collection.insert_one({
-            **result,
-            "email": clean_email,
-            "patient_key": patient_key,
-        })
+        PATIENT_HISTORY_DB.setdefault(patient_key, []).insert(0, result)
 
         return result
 
@@ -931,11 +1014,25 @@ async def get_text_summary(
 ):
     clean_email = email.lower().strip()
 
-    query = {"id": report_id, "email": clean_email}
     if patient_name:
-        query["patient_key"] = make_patient_key(clean_email, patient_name)
+        key = make_patient_key(clean_email, patient_name)
+        user_history = PATIENT_HISTORY_DB.get(key, [])
+    else:
+        user_history = [
+            report
+            for key, reports in PATIENT_HISTORY_DB.items()
+            if key.startswith(clean_email + "::")
+            for report in reports
+        ]
 
-    report = reports_collection.find_one(query, {"_id": 0})
+    report = next(
+        (
+            record
+            for record in user_history
+            if record.get("id") == report_id
+        ),
+        None,
+    )
 
     if not report:
         raise HTTPException(

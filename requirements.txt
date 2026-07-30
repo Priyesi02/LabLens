@@ -13,4 +13,3 @@ twilio==9.3.0
 fastapi
 uvicorn
 boto3
-pymongo==4.10.1
