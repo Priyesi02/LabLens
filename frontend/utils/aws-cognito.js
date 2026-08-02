@@ -31,7 +31,14 @@ function clearAuthenticatedUserEmail() {
   }
 }
 
-// FIX: Prevent Next.js HMR from double-configuring and throwing stream errors
+// Prevent Next.js HMR from double-configuring and throwing stream errors.
+// Note: intentionally NOT passing { ssr: true } here — that switches Amplify
+// to cookie-based token storage meant for apps that read auth server-side
+// (via middleware / runWithAmplifyServerContext). This app is fully
+// client-side, so the default localStorage-based storage is what we want;
+// { ssr: true } without the matching server-side plumbing caused
+// "Unable to get user session following successful sign-in" right after
+// sign-in, since the session cookie wasn't reliably persisted yet.
 if (!Amplify.getConfig().Auth) {
   Amplify.configure({
     Auth: {
@@ -40,7 +47,7 @@ if (!Amplify.getConfig().Auth) {
         userPoolClientId: process.env.NEXT_PUBLIC_COGNITO_APP_CLIENT_ID,
       }
     }
-  }, { ssr: true });
+  });
 }
 
 export function getStoredUserEmail() {
@@ -146,17 +153,46 @@ export async function confirmRegistration(email, verificationCode) {
  */
 export async function requestLoginOTP(email) {
   try {
-    const { nextStep } = await signIn({
+    let { nextStep } = await signIn({
       username: email,
       options: {
         authFlowType: 'USER_AUTH',
         preferredChallenge: 'EMAIL_OTP', // Switched delivery routing to FREE Email pipeline
       },
     });
+
+    console.log('[Cognito] signIn nextStep:', nextStep);
+
+    // The User Pool has more than one first-factor option (e.g. password
+    // and email OTP) configured, so Cognito won't send the code until we
+    // explicitly select EMAIL_OTP as the chosen factor.
+    if (nextStep?.signInStep === 'CONTINUE_SIGN_IN_WITH_FIRST_FACTOR_SELECTION') {
+      console.log('[Cognito] available first factors:', nextStep.availableChallenges);
+
+      if (!nextStep.availableChallenges?.includes('EMAIL_OTP')) {
+        return {
+          success: false,
+          error: `This User Pool does not offer EMAIL_OTP as a sign-in option. Available: ${JSON.stringify(nextStep.availableChallenges)}`,
+          nextStep,
+        };
+      }
+
+      const selection = await confirmSignIn({ challengeResponse: 'EMAIL_OTP' });
+      nextStep = selection.nextStep;
+      console.log('[Cognito] factor selection nextStep:', nextStep);
+    }
+
+    if (nextStep?.signInStep !== 'CONFIRM_SIGN_IN_WITH_EMAIL_CODE') {
+      return {
+        success: false,
+        error: `Sign-in did not start an email code challenge (got "${nextStep?.signInStep}" instead). This account or User Pool may not be configured for email OTP sign-in.`,
+        nextStep,
+      };
+    }
+
     persistAuthenticatedUserEmail(email);
     return { success: true, nextStep };
   } catch (error) {
-    persistAuthenticatedUserEmail(email);
     return { success: false, error: error.message };
   }
 }

@@ -4,6 +4,16 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { registerPatient, confirmRegistration, autoLoginAfterSignUp, setStoredUserEmail } from '@/utils/aws-cognito';
 
+// Cognito requires E.164 format (e.g. +919876543210). A plain 10-digit
+// Indian number entered without a country code fails with a cryptic
+// "Invalid phone number format" error, so normalize it here first.
+function toE164(phone: string): string {
+  const digitsOnly = phone.replace(/[\s-]/g, '');
+  if (digitsOnly.startsWith('+')) return digitsOnly;
+  if (/^\d{10}$/.test(digitsOnly)) return `+91${digitsOnly}`;
+  return digitsOnly;
+}
+
 export default function SignUpPage() {
   const router = useRouter();
   const [step, setStep] = useState<'FIELDS' | 'VERIFY'>('FIELDS');
@@ -38,11 +48,11 @@ export default function SignUpPage() {
     const res = await registerPatient({
       name: formData.name,
       email: formData.email,
-      phoneNumber: formData.phoneNumber,
+      phoneNumber: toE164(formData.phoneNumber),
       age: Number(formData.age),
       sex: formData.sex,
       emergencyName: formData.emergencyName,
-      emergencyPhone: formData.emergencyPhone,
+      emergencyPhone: toE164(formData.emergencyPhone),
       language: formData.language
     });
 
