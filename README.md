@@ -132,7 +132,7 @@ Instead of forcing patients to interpret unfamiliar biomarkers and medical termi
 ## Cloud
 
 - AWS Cognito (authentication)
-- AWS S3 / Textract (configured, not currently wired into the live analysis flow)
+- AWS S3 
 
 ## Data Storage
 
