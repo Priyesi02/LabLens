@@ -4,7 +4,7 @@ import { Activity } from "lucide-react";
 
 export function Logo({ size = 38 }: { size?: number }) {
   return (
-    <div className="flex items-center gap-2.5">
+    <Link href="/" className="flex items-center gap-2.5">
       <div
         className="flex items-center justify-center rounded-md bg-gradient-to-br from-teal-400 to-teal-500 text-white shadow-glow"
         style={{ width: size, height: size, borderRadius: size * 0.32 }}
@@ -14,7 +14,7 @@ export function Logo({ size = 38 }: { size?: number }) {
       <span className="font-display text-[19px] font-extrabold tracking-tightish text-ink">
         LabLens
       </span>
-    </div>
+    </Link>
   );
 }
 
